@@ -1,0 +1,116 @@
+{
+    "servers": {
+      "llm": "https://api-inference.huggingface.co/models",
+      "llm_api_key": "NULL",
+      "llm_api_type": "hf",
+      "llm_max_tokens": 100,
+      "llm_temperature": 0.8,
+      "llm_v": "http://127.0.0.1:11434/v1",
+      "llm_v_api_key": "NULL",
+      "llm_v_max_tokens": 300,
+      "llm_v_temperature": 0.5,
+      "api": "http://127.0.0.1:5010/"
+    },
+    "simulation": {
+      "name": "simulation",
+      "client": "YClientBase",
+      "days": 1,
+      "slots": 12,
+      "starting_agents": 9,
+      "percentage_new_agents_iteration": 0,
+      "percentage_removed_agents_iteration": 0,
+      "hourly_activity": {
+          "0": 0.015,
+          "1": 0.010,
+          "2": 0.007,
+          "3": 0.005,
+          "4": 0.005,
+          "5": 0.007,
+          "6": 0.012,
+          "7": 0.020,
+          "8": 0.030,
+          "9": 0.035,
+          "10": 0.033,
+          "11": 0.032,
+          "12": 0.040,
+          "13": 0.038,
+          "14": 0.036,
+          "15": 0.034,
+          "16": 0.037,
+          "17": 0.042,
+          "18": 0.045,
+          "19": 0.048,
+          "20": 0.050,
+          "21": 0.047,
+          "22": 0.040,
+          "23": 0.030
+      },
+      "actions_likelihood": {
+        "post": 0.8,
+        "comment": 0.5,
+        "read": 0.2,
+        "search": 0.1,
+        "cast": 0,      
+        "image": 0,
+        "news": 0,
+        "share": 0
+      }
+    },
+    "agents": {
+      "languages": ["italiano"],
+      "education_levels": ["N/A"],
+      "max_length_thread_reading": 5,
+      "reading_from_follower_ratio": 0.6,
+      "political_leanings": [""],
+      "age": {
+          "min": 18,
+          "max": 60
+      },
+      "daily_actions": {
+        "min": 1,
+        "max": 1
+      },
+      "llm_agents": ["google/gemma-2-2b-it"],
+      "llm_v_agent": [],
+      "n_interests": {
+          "min": 4,
+          "max": 4
+      },
+      "round_actions": {
+        "min": 1,
+        "max": 1
+      },
+      "nationalities": ["Italian"],
+      "probability_of_daily_follow": 0.1,
+      "interests": [
+        "energia nucleare","immigrazione", "reddito di cittadinanza", "diritti civili"
+      ],
+      "toxicity_levels": [""],
+      "attention_window": 336,
+      "big_five": {
+        "oe": ["inventive/curious", "consistent/cautious"],
+        "co": ["efficient/organized", "extravagant/careless"],
+        "ex": ["outgoing/energetic", "solitary/reserved"],
+        "ag": ["friendly/compassionate", "critical/judgmental"],
+        "ne": ["sensitive/nervous", "resilient/confident"]
+      }
+    },
+    "agents_init": {
+      "user_data_file": "user_data/user_aggregated_data.csv",
+      "min_posts_written": 3,
+      "min_replies_written": 3,
+      "coalition_data_file": "config_files/coalizioni.json"
+    },
+    "posts": {
+      "visibility_rounds": 36,
+      "emotions": {
+        "admiration": null, "amusement": null, "anger": null, "annoyance": null,
+        "approval": null, "caring": null, "confusion": null, "curiosity": null,
+        "desire": null, "disappointment": null, "disapproval": null, "disgust": null,
+        "embarrassment": null, "excitement": null, "fear": null, "gratitude": null,
+        "grief": null, "joy": null, "love": null, "nervousness": null, "optimism": null,
+        "pride": null, "realization": null, "relief": null, "remorse": null, "sadness": null,
+        "surprise": null, "trust": null
+      }
+    }
+}  

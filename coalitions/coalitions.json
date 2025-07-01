@@ -1,0 +1,242 @@
+{
+    "Centre-Left": {
+        "toxicity": {
+            "post": {
+                "distribution": "beta",
+                "params": {
+                    "a": 1.4654349688964963,
+                    "b": 8.014892375626887,
+                    "loc": 0,
+                    "scale": 1
+                }
+            },
+            "comment": {
+                "distribution": "beta",
+                "params": {
+                    "a": 1.498566381908808,
+                    "b": 7.541019456498083,
+                    "loc": 0,
+                    "scale": 1
+                }
+            }
+        },
+        "content_count": {
+            "post": {
+                "zero_prob": 0.000714,
+                "distribution": "nbinom",
+                "params": {
+                    "n": 0.192153,
+                    "p": 0.004271
+                },
+                "n_max": 709
+            },
+            "comment": {
+                "zero_prob": 0.382608,
+                "distribution": "nbinom",
+                "params": {
+                    "n": 0.199498,
+                    "p": 0.009165
+                },
+                "n_max": 257
+            }
+        },
+        "topic_opinion": {
+            "nuclear energy": {
+                "label": "STRONGLY OPPOSED",
+                "description": "The ecological transition must prioritize renewables and energy efficiency; nuclear power is considered too expensive, slow to implement, and incompatible with the urgent need to reduce emissions by 2030, while also raising unresolved environmental concerns."
+            },
+            "immigration": {
+                "label": "SUPPORTIVE",
+                "description": "Policies of reception and inclusion are needed, aiming to facilitate integration pathways, guarantee migrants' rights, and build a European immigration management system based on solidarity among member states. Humanitarian corridors should be expanded for emergency situations."
+            },
+            "reddito di cittadinanza": {
+                "label": "SUPPORTIVE",
+                "description": "The current system shouldn't be abolished, but we should address distortions. Proposals include recalibrating the benefit, introducing support for large families, a minimum wage, mandating pay for curricular internships, and abolishing unpaid extracurricular internships."
+            },
+            "civil rights": {
+                "label": "STRONGLY SUPPORTIVE",
+                "description": "Support for equal marriage and adoption rights for same-sex couples, anti-homotransphobia laws, and recognition of LGBTQIA+ rights."
+            }
+        }
+    },
+    "M5S": {
+        "toxicity": {
+            "post": {
+                "distribution": "beta",
+                "params": {
+                    "a": 1.5425491587961147,
+                    "b": 7.610825300545539,
+                    "loc": 0,
+                    "scale": 1
+                }
+            },
+            "comment": {
+                "distribution": "beta",
+                "params": {
+                    "a": 1.660744211347523,
+                    "b": 7.178104219138641,
+                    "loc": 0,
+                    "scale": 1
+                }
+            }
+        },
+        "content_count": {
+            "post": {
+                "zero_prob": 0.00155,
+                "distribution": "nbinom",
+                "params": {
+                    "n": 0.227407,
+                    "p": 0.00348
+                },
+                "n_max": 790
+            },
+            "comment": {
+                "zero_prob": 0.283979,
+                "distribution": "nbinom",
+                "params": {
+                    "n": 0.279059,
+                    "p": 0.009637
+                },
+                "n_max": 306
+            }
+        },
+        "topic_opinion": {
+            "nuclear energy": {
+                "label": "STRONGLY OPPOSED",
+                "description": "Nuclear energy has high costs and safety risks. We should focus on a decentralized energy model that encourages self-production and local energy efficiency."
+            },
+            "immigration": {
+                "label": "SUPPORTIVE",
+                "description": "A humanitarian approach is needed, with integration policies and mandatory redistribution of migrants across Europe."
+            },
+            "reddito di cittadinanza": {
+                "label": "STRONGLY SUPPORTIVE",
+                "description": "The reddito di cittadinanza is strongly defended, with proposals to enhance the efficiency of active labor policies and implement antifraud monitoring mechanisms."
+            },
+            "civil rights": {
+                "label": "STRONGLY SUPPORTIVE",
+                "description": "Support for equal marriage, anti-homotransphobia legislation."
+            }
+        }
+    },
+    "Third Pole": {
+        "toxicity": {
+            "post": {
+                "distribution": "beta",
+                "params": {
+                    "a": 1.5443175664424214,
+                    "b": 9.012642762801264,
+                    "loc": 0,
+                    "scale": 1
+                }
+            },
+            "comment": {
+                "distribution": "beta",
+                "params": {
+                    "a": 1.4951626150216484,
+                    "b": 8.146536602040014,
+                    "loc": 0,
+                    "scale": 1
+                }
+            }
+        },
+        "content_count": {
+            "post": {
+                "zero_prob": 0.0,
+                "distribution": "nbinom",
+                "params": {
+                    "n": 0.186762,
+                    "p": 0.00402
+                },
+                "n_max": 659
+            },
+            "comment": {
+                "zero_prob": 0.307279,
+                "distribution": "nbinom",
+                "params": {
+                    "n": 0.188414,
+                    "p": 0.008862
+                },
+                "n_max": 255
+            }
+        },
+        "topic_opinion": {
+            "nuclear energy": {
+                "label": "SUPPORTIVE",
+                "description": "Including nuclear energy in the energy mix is needed to achieve the 'net zero emissions' goal by 2050, considering it necessary to meet future energy needs safely and efficiently."
+            },
+            "immigration": {
+                "label": "SUPPORTIVE",
+                "description": "A regulated and planned immigration system is needed, with integration policies, regularization for those with jobs, and training pathways. Expanding humanitarian corridors and establishing a Ministry for Migration are also supported."
+            },
+            "reddito di cittadinanza": {
+                "label": "OPPOSED",
+                "description": "The current system is considered ineffective. It should be reformed to be reserved only for those unfit for work. The benefit should be revoked after the first job refusal, and a time limit should be imposed: if no employment is found within two years, the amount is reduced."
+            },
+            "civil rights": {
+                "label": "SUPPORTIVE",
+                "description": "We need the introduction of laws against homophobia and transphobia, the creation of an Anti-Discrimination Authority."
+            }
+        }
+    },
+    "Right": {
+        "toxicity": {
+            "post": {
+                "distribution": "beta",
+                "params": {
+                    "a": 0.8392308522288047,
+                    "b": 5.038935517993441,
+                    "loc": 0,
+                    "scale": 1
+                }
+            },
+            "comment": {
+                "distribution": "beta",
+                "params": {
+                    "a": 1.202114977552511,
+                    "b": 5.468477558871138,
+                    "loc": 0,
+                    "scale": 1
+                }
+            }
+        },
+        "content_count": {
+            "post": {
+                "zero_prob": 0.001036,
+                "distribution": "nbinom",
+                "params": {
+                    "n": 0.176069,
+                    "p": 0.005246
+                },
+                "n_max": 518
+            },
+            "comment": {
+                "zero_prob": 0.478769,
+                "distribution": "nbinom",
+                "params": {
+                    "n": 0.230908,
+                    "p": 0.014547
+                },
+                "n_max": 161
+            }
+        },
+        "topic_opinion": {
+            "nuclear energy": {
+                "label": "STRONGLY SUPPORTIVE",
+                "description": "We should support the development of next-generation nuclear power. This includes investment in research, production facilities, and integration with renewable energy sources to ensure energy security and reduce dependence on imports."
+            },
+            "immigration": {
+                "label": "STRONGLY OPPOSED",
+                "description": "We should stop illegal immigration, with the support for stricter control policies, naval blockades, and flow management through bilateral agreements with countries of origin. We should create European-managed centers outside Europe to process asylum requests and distribute refugees fairly."
+            },
+            "reddito di cittadinanza": {
+                "label": "STRONGLY OPPOSED",
+                "description": "We should abolish the reddito di cittadinanza, with a preference for targeted support measures for employment and vulnerable groups to prevent abuse."
+            },
+            "civil rights": {
+                "label": "STRONGLY OPPOSED",
+                "description": "We should avoid reforms introducing new rights regarding family and gender identity, with a preference for defending the 'traditional family.'"
+            }
+        }
+    }
+}

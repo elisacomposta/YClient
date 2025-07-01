@@ -1,16 +1,18 @@
 from y_client.recsys.ContentRecSys import ContentRecSys
 from y_client.recsys.FollowRecSys import FollowRecSys
-from y_client.news_feeds.client_modals import Websites, Images, Articles, session, Agent_Custom_Prompt
+from y_client.news_feeds.client_modals import Websites, Images, session, Agent_Custom_Prompt
 from y_client.classes.annotator import Annotator
 from sqlalchemy.sql.expression import func
 from y_client.news_feeds.feed_reader import NewsFeed
 from y_client.classes.time import SimulationSlot
+from y_client.utils import opinions_to_str, parse_opinions, toxicity_to_label
+from y_client.llm_helper import query_assistant, query_huggingface, query_model
 import random
-from requests import get, post
+import requests
 import json
-from autogen import AssistantAgent
 import numpy as np
 import re
+from y_client.constants import API_HEADERS, BIAS_INSTRUCTIONS, LOCALES, SCORE_TO_OPINION_TAG, TRANSLATIONS, TOPIC_DESCRIPTION
 
 __all__ = ["Agent", "Agents"]
 
@@ -39,7 +41,17 @@ class Agent(object):
         nationality: str = None,
         toxicity: str = "no",
         api_key: str = "NULL",
+        api_type: str = "open_ai",
         is_page: int = 0,
+        original_id: int = None,
+        toxicity_post_avg: float = 0,
+        toxicity_post_var: float = 0,
+        toxicity_comment: float = 0,
+        activity_post: float = 0,
+        activity_comment: float = 0,
+        coalition_program: dict = None,
+        is_misinfo: int = False,
+        susceptibility: float = 0,
         *args,
         **kwargs,
     ):
@@ -67,7 +79,11 @@ class Agent(object):
         :param nationality: the agent nationality
         :param toxicity: the toxicity level of the agent, default is "no"
         :param api_key: the LLM server api key, default is NULL (self-hosted)
+        :param is_page: whether the agent is a page or not, default is 0
+        :param toxicity_post_avg: the average toxicity of the posts
+        :param toxicity_post_var: the variance of the toxicity of the posts
         """
+        self.session = requests.Session()
 
         if "web" in kwargs:
 
@@ -83,6 +99,7 @@ class Agent(object):
             self.llm_base = config["servers"]["llm"]
             self.content_rec_sys_name = None
             self.follow_rec_sys_name = None
+            self.opinion_model = config["simulation"]["opinion_model"]
             self.name = name
             self.email = email
             self.attention_window = int(config["agents"]["attention_window"])
@@ -94,6 +111,8 @@ class Agent(object):
                 "max_tokens": config["servers"]["llm_v_max_tokens"]
             }
             self.is_page = is_page
+            self.llm_language = config["agents"]["llm_language"]
+            self.memory = ""
 
             if not load:
                 self.language = language
@@ -109,14 +128,22 @@ class Agent(object):
                 self.ne = big_five["ne"]
                 self.owner = owner
                 self.education_level = education_level
-                self.joined_on = joined_on
                 sc = SimulationSlot(config)
                 sc.get_current_slot()
-                self.joined_on = sc.id
+                self.joined_on = sc.id if joined_on is None else joined_on
                 self.round_actions = round_actions
                 self.gender = gender
                 self.nationality = nationality
                 self.toxicity = toxicity
+                self.original_id = original_id
+                self.toxicity_posts_avg = toxicity_post_avg
+                self.toxicity_posts_var = toxicity_post_var
+                self.toxicity_comment = toxicity_comment
+                self.activity_post = activity_post
+                self.activity_comment = activity_comment
+                self.coalition_program = coalition_program
+                self.is_misinfo = is_misinfo
+                self.susceptibility = susceptibility
 
                 uid = self.__register()
                 if uid is None:
@@ -131,9 +158,10 @@ class Agent(object):
                 self.age = us["age"]
 
                 if us["is_page"] == 0:
-                    self.interests = random.randint(config["agents"]["n_interests"]["min"],
+                    n_interests = random.randint(config["agents"]["n_interests"]["min"],
                                                     config["agents"]["n_interests"]["max"])
-                    self.interests = self.__get_interests(-1)[0]
+                    self.interests = n_interests
+                    self.interests = self._get_interests(-1, n_max=n_interests)[0]
                 else:
                     self.interests = []
 
@@ -155,12 +183,22 @@ class Agent(object):
                 self.toxicity = us["toxicity"]
                 self.nationality = us["nationality"]
                 self.is_page = us["is_page"]
+                self.original_id = us.get("original_id", 0)
+                self.toxicity_posts_avg = us.get("toxicity_post_avg", 0)
+                self.toxicity_posts_var = us.get("toxicity_post_var", 0)
+                self.toxicity_comment = us.get("toxicity_comment", 0)
+                self.activity_post = us.get("activity_post", 0)
+                self.activity_comment = us.get("activity_comment", 0)
+                self.coalition_program = us.get("coalition_program", "")
+                self.is_misinfo = us.get("is_misinfo", 0)
+                self.susceptibility = us.get("susceptibility", 0)
+
 
             config_list = {
                 "model": f"{self.type}",
                 "base_url": self.llm_base,
                 "timeout": 10000,
-                "api_type": "open_ai",
+                "api_type": api_type,
                 "api_key": api_key if (api_key is not None and api_key != "") else "NULL",
                 "price": [0, 0],
             }
@@ -292,10 +330,10 @@ class Agent(object):
                 try:
                     self.interests = random.randint(config["agents"]["n_interests"]["min"],
                                                     config["agents"]["n_interests"]["max"])
-                    self.interests = self.__get_interests(-1)[0]
+                    self.interests = self._get_interests(-1)[0]
                 except:
                     self.interests = interests
-                    self.interests = self.__get_interests(-1)[0]
+                    self.interests = self._get_interests(-1)[0]
             else:
                 self.interests = []
 
@@ -347,7 +385,7 @@ class Agent(object):
 
         self.prompts = None
 
-    def __effify(self, non_f_str: str, **kwargs):
+    def _effify(self, non_f_str: str, **kwargs):
         """
         Effify the string.
 
@@ -391,14 +429,13 @@ class Agent(object):
 
             api_url = f"{self.base_url}update_user"
 
-            headers = {"Content-Type": "application/x-www-form-urlencoded"}
             params = {
                 "username": self.name,
                 "email": self.email,
                 "recsys_type": content_recsys.name,
             }
             st = json.dumps(params)
-            post(f"{api_url}", headers=headers, data=st)
+            self.session.post(f"{api_url}", headers=API_HEADERS, data=st)
 
         if self.follow_rec_sys is None:
             self.follow_rec_sys = follow_recsys
@@ -407,18 +444,17 @@ class Agent(object):
 
             api_url = f"{self.base_url}update_user"
 
-            headers = {"Content-Type": "application/x-www-form-urlencoded"}
             params = {
                 "username": self.name,
                 "email": self.email,
                 "frecsys_type": follow_recsys.name,
             }
             st = json.dumps(params)
-            post(f"{api_url}", headers=headers, data=st)
+            self.session.post(f"{api_url}", headers=API_HEADERS, data=st)
 
         return {"status": 200}
-
-    def __extract_components(self, text, c_type="hashtags"):
+    
+    def _extract_components(self, text, c_type="hashtags"):
         """
         Extract the components from the text.
 
@@ -433,9 +469,27 @@ class Agent(object):
             pattern = re.compile(r"@\w+")
         else:
             return []
-        # Find all matches in the input text
-        hashtags = pattern.findall(text)
-        return hashtags
+        
+        # Find all matches and remove duplicates
+        components = set(pattern.findall(text))
+
+        # Remove self-mentions if extracting mentions
+        if c_type == "mentions":
+            components.discard(f"@{self.name}")
+
+        return list(components)
+    
+    def _remove_components(self, text, components):
+        """
+        Remove the extracted components from the text.
+
+        :param text: The original text
+        :param components: The list of components (hashtags or mentions) to remove
+        :return: The cleaned text
+        """
+        for comp in components:
+            text = text.replace(comp, "")
+        return text.strip()
 
     def __get_user(self):
         """
@@ -448,11 +502,10 @@ class Agent(object):
             raise Exception("User not found")
         api_url = f"{self.base_url}get_user"
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
         params = {"username": self.name, "email": self.email}
         st = json.dumps(params)
 
-        response = post(f"{api_url}", headers=headers, data=st)
+        response = self.session.post(f"{api_url}", headers=API_HEADERS, data=st)
 
         return response.__dict__["_content"].decode("utf-8")
 
@@ -464,11 +517,10 @@ class Agent(object):
         """
         api_url = f"{self.base_url}user_exists"
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
         params = {"name": self.name, "email": self.email}
 
         st = json.dumps(params)
-        response = post(f"{api_url}", headers=headers, data=st)
+        response = self.session.post(f"{api_url}", headers=API_HEADERS, data=st)
 
         return response.__dict__["_content"].decode("utf-8")
 
@@ -501,13 +553,19 @@ class Agent(object):
                 "toxicity": self.toxicity,
                 "joined_on": self.joined_on,
                 "is_page": self.is_page,
+                "original_id": self.original_id,
+                "toxicity_post_avg": self.toxicity_posts_avg,
+                "toxicity_post_var": self.toxicity_posts_var,
+                "toxicity_comment": self.toxicity_comment,
+                "activity_post": self.activity_post,
+                "activity_comment": self.activity_comment,
+                "is_misinfo": self.is_misinfo,
+                "susceptibility": self.susceptibility,
             }
         )
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-
         api_url = f"{self.base_url}/register"
-        post(f"{api_url}", headers=headers, data=st)
+        self.session.post(f"{api_url}", headers=API_HEADERS, data=st)
 
         try:
             res = json.loads(self.__get_user())
@@ -518,35 +576,39 @@ class Agent(object):
         api_url = f"{self.base_url}/set_user_interests"
         data = {"user_id": uid, "interests": self.interests, "round": self.joined_on}
 
-        post(f"{api_url}", headers=headers, data=json.dumps(data))
+        self.session.post(f"{api_url}", headers=API_HEADERS, data=json.dumps(data))
 
         return uid
 
-    def __get_interests(self, tid):
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-
-        # current round
+    def _get_interests(self, tid, n_max=2):
         if tid == -1:
             # get last round id
             api_url = f"{self.base_url}/current_time"
-            response = get(f"{api_url}", headers=headers)
+            response = self.session.get(f"{api_url}", headers=API_HEADERS)
             data = json.loads(response.__dict__["_content"].decode("utf-8"))
             tid = int(data["id"])
 
-        api_url = f"{self.base_url}/get_user_interests"
-
-        data = {
-            "user_id": self.user_id,
-            "round_id": tid,
-            "n_interests": self.interests if isinstance(self.interests, int) else len(self.interests),
-            "time_window": self.attention_window,
-        }
-        response = get(f"{api_url}", headers=headers, data=json.dumps(data))
-        data = json.loads(response.__dict__["_content"].decode("utf-8"))
+        def fetch_interests(time_window):
+            api_url = f"{self.base_url}/get_user_interests"
+            data = {
+                "user_id": self.user_id,
+                "round_id": tid,
+                "n_interests": self.interests if isinstance(self.interests, int) else len(self.interests),
+                "time_window": time_window,
+            }
+            response = self.session.get(api_url, headers=API_HEADERS, data=json.dumps(data))
+            return json.loads(response.content.decode("utf-8"))
+        
         try:
+            data = fetch_interests(self.attention_window)
+
+            # if no interests in attention window, fetch all
+            if not data or len(data) == 0:
+                data = fetch_interests(tid)
+
             # select a random interest without replacement
-            if len(data) >= 3:
-                selected = np.random.choice(range(len(data)), np.random.randint(1, 3), replace=False)
+            if len(data) > n_max:
+                selected = np.random.choice(range(len(data)), np.random.randint(1, n_max+1), replace=False)
             else:
                 selected = np.random.choice(range(len(data)), len(data), replace=False)
 
@@ -556,6 +618,27 @@ class Agent(object):
             return [], []
 
         return interests, interests_id
+    
+    def _get_interests_to_update(self, tid):
+        """
+        Get the interests the agents interacted with since the last opinion update
+        """
+        # get round of last opinion
+        api_url = f"{self.base_url}/get_last_opinion_round"
+        response = self.session.get(f"{api_url}", headers=API_HEADERS, data=json.dumps({"user_id": self.user_id}))
+        data = json.loads(response.__dict__["_content"].decode("utf-8"))
+        last_opinion_round = int(data["round"])
+
+        # get active topics since last update
+        api_url = f"{self.base_url}/get_active_topics"
+        data = {
+            "user_id": self.user_id,
+            "base_round": last_opinion_round,
+            "end_round": tid
+        }
+        response = self.session.get(api_url, headers=API_HEADERS, data=json.dumps(data))
+        topics = json.loads(response.content.decode("utf-8"))
+        return topics
 
     def post(self, tid):
         """
@@ -563,86 +646,72 @@ class Agent(object):
 
         :param tid: the round id
         """
+        topic_descr = "\n".join([f" - {topic.capitalize()}: {TOPIC_DESCRIPTION[topic.lower()]}" for topic in self.interests if topic.lower() in TOPIC_DESCRIPTION])
+        current_opinion = opinions_to_str(self.opinions, self.interests)
+        coalition_opinion = opinions_to_str(self.coalition_program, self.interests)
 
-        # obtain the most recent (and frequent) interests of the agent
-        interests, interests_id = self.__get_interests(tid)
+        agent_prompt=self._effify(self.prompts["agent_roleplay"], topic_descriptions=topic_descr, coalition_opinion=coalition_opinion, opinion=current_opinion)
+        handler_prompt = self.prompts["handler_instructions"]
 
-        # get recent sentiment on the selected interests
-        api_url = f"{self.base_url}/get_sentiment"
-        data = {"user_id": self.user_id, "interests": interests}
-        response = post(f"{api_url}", headers={"Content-Type": "application/x-www-form-urlencoded"}, data=json.dumps(data))
-        sentiment = json.loads(response.__dict__["_content"].decode("utf-8"))
+        interests, interests_id = self._get_interests(tid, n_max=1)
+        topic = interests[0] if len(interests) > 0 else ""      
 
-        self.topics_opinions = "Your opinion on the topics you are interested in is: "
-        for s in sentiment:
-            self.topics_opinions += f"{s['topic']}: {s['sentiment']} "
-        if len(sentiment) == 0:
-            self.topics_opinions = ""
+        handler_post_prompt = self.prompts["handler_post_misinfo"] if self.is_misinfo else self.prompts["handler_post"]      
+        handler_message = self._effify(handler_post_prompt, topic=topic, toxicity=toxicity_to_label(self.toxicity_posts_avg, self.llm_language))
 
-        u1 = AssistantAgent(
-            name=f"{self.name}",
-            llm_config=self.llm_config,
-            system_message=self.__effify(
-                self.prompts["agent_roleplay"], interest=interests
-            ),
-            max_consecutive_auto_reply=1,
-        )
+        api_type = self.llm_config['config_list'][0]['api_type']
+        if api_type == "hf":
+            prompt = f"{agent_prompt}\n\n{handler_message}"
+            post_text = query_huggingface(prompt, llm_config=self.llm_config)
+            emotion_eval = []
+        elif api_type == "url":
+            prompt = f"{agent_prompt}\n\n{handler_message}"
+            post_text = query_model(prompt, llm_config=self.llm_config)
+            emotion_eval = []
+        else:
+            _, chat_messages = query_assistant(self.name, self.llm_config, agent_prompt, handler_prompt, handler_message)
+            post_text = chat_messages[-2]["content"]
+            emotion_eval = chat_messages[-1]["content"].lower()
+            emotion_eval = self._clean_emotion(emotion_eval)
 
-        u2 = AssistantAgent(
-            name=f"Handler",
-            llm_config=self.llm_config,
-            system_message=self.prompts["handler_instructions"],
-            max_consecutive_auto_reply=1,
-        )
-
-        u2.initiate_chat(
-            u1,
-            message=self.__effify(self.prompts["handler_post"]),
-            silent=True,
-            max_round=1,
-        )
-
-        emotion_eval = u2.chat_messages[u1][-1]["content"].lower()
-        emotion_eval = self.__clean_emotion(emotion_eval)
-
-        post_text = u2.chat_messages[u1][-2]["content"]
-
-        post_text = self.__clean_text(post_text)
+        post_text = self._extract_tweet(post_text)
 
         # avoid posting empty messages
         if len(post_text) < 3:
             return
 
-        hashtags = self.__extract_components(post_text, c_type="hashtags")
-        mentions = self.__extract_components(post_text, c_type="mentions")
+        # extract hashtags and mentions
+        hashtags = self._extract_components(post_text, c_type="hashtags")
+        mentions = self._extract_components(post_text, c_type="mentions")
 
+        post_text = self._remove_components(post_text, hashtags)
+        post_text = post_text.replace('"', "")
+        
         st = json.dumps(
             {
                 "user_id": self.user_id,
-                "tweet": post_text.replace('"', ""),
+                "tweet": post_text,
                 "emotions": emotion_eval,
                 "hashtags": hashtags,
                 "mentions": mentions,
                 "tid": tid,
-                "topics": interests_id
+                "topics": interests_id,
+                "src_language": self.llm_language,
+                "tgt_language": self.language
             }
         )
 
-        u1.reset()
-        u2.reset()
-
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-
+        # send post to server
         api_url = f"{self.base_url}/post"
-        post(f"{api_url}", headers=headers, data=st)
+        self.session.post(f"{api_url}", headers=API_HEADERS, data=st)
+        self.memory += f"You posted:\n\"{post_text}\"\n\n"
 
-        # update topic of interest with the ones used to generate the post
+        # update user interests
         api_url = f"{self.base_url}/set_user_interests"
-        data = {"user_id": self.user_id, "interests": interests, "round": tid}
-        post(f"{api_url}", headers=headers, data=json.dumps(data))
+        data = {"user_id": self.user_id, "interests": interests_id, "round": tid}
+        self.session.post(f"{api_url}", headers=API_HEADERS, data=json.dumps(data))
 
-
-    def __get_thread(self, post_id: int, max_tweets=None):
+    def _get_thread(self, post_id: int, max_tweets=None):
         """
         Get the thread of a post.
 
@@ -651,17 +720,18 @@ class Agent(object):
         """
         api_url = f"{self.base_url}/post_thread"
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
         params = {"post_id": post_id}
         st = json.dumps(params)
-        response = post(f"{api_url}", headers=headers, data=st)
+        response = self.session.post(f"{api_url}", headers=API_HEADERS, data=st)
 
         res = json.loads(response.__dict__["_content"].decode("utf-8"))
+        tweets = res["tweets"]
+        latest_post = res["latest_post"]
 
         if max_tweets is not None and len(res) > max_tweets:
-            return res[-max_tweets:]
+            return tweets[-max_tweets:]
 
-        return res
+        return tweets, latest_post
 
     def get_user_from_post(self, post_id: int):
         """
@@ -672,10 +742,9 @@ class Agent(object):
         """
         api_url = f"{self.base_url}/get_user_from_post"
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
         params = {"post_id": post_id}
         st = json.dumps(params)
-        response = post(f"{api_url}", headers=headers, data=st)
+        response = self.session.post(f"{api_url}", headers=API_HEADERS, data=st)
 
         res = json.loads(response.__dict__["_content"].decode("utf-8"))
         return res
@@ -689,10 +758,9 @@ class Agent(object):
         """
         api_url = f"{self.base_url}/get_article"
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
         params = {"post_id": int(post_id)}
         st = json.dumps(params)
-        response = post(f"{api_url}", headers=headers, data=st)
+        response = self.session.post(f"{api_url}", headers=API_HEADERS, data=st)
         if response.status_code == 404:
             return None
         res = json.loads(response.__dict__["_content"].decode("utf-8"))
@@ -707,10 +775,13 @@ class Agent(object):
         """
         api_url = f"{self.base_url}/get_post"
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
         params = {"post_id": post_id}
         st = json.dumps(params)
-        response = post(f"{api_url}", headers=headers, data=st)
+        response = self.session.post(f"{api_url}", headers=API_HEADERS, data=st)
+
+        if response.status_code != 200:
+            print(f"\n\nError in getting root for post {post_id}: {response.status_code}, {response.text}\nInterests not updated.\n\n")
+            return None
 
         res = json.loads(response.__dict__["_content"].decode("utf-8"))
         return res
@@ -723,122 +794,104 @@ class Agent(object):
         :param tid: the round id
         :param max_length_threads: the maximum length of the thread to read for context
         """
+        topic_descr = "\n".join([f" - {topic.capitalize()}: {TOPIC_DESCRIPTION[topic.lower()]}" for topic in self.interests if topic.lower() in TOPIC_DESCRIPTION])
+        current_opinion = opinions_to_str(self.opinions, self.interests)
+        coalition_opinion = opinions_to_str(self.coalition_program, self.interests)
 
-        conversation = self.__get_thread(post_id, max_tweets=max_length_threads)
+        agent_prompt=self._effify(self.prompts["agent_roleplay"], opinion=current_opinion, coalition_opinion=coalition_opinion, topic_descriptions=topic_descr)
+        handler_prompt = self._effify(self.prompts["handler_instructions"])
+
+        conversation, latest_posts = self._get_thread(post_id, max_tweets=max_length_threads)
         conv = "".join(conversation)
 
-        # obtain the most recent (and frequent) interests of the agent
-        # interests, _ = self.__get_interests(tid)
+        api_url = f"{self.base_url}/get_post_topics"
+        response = self.session.get(f"{api_url}", headers=API_HEADERS,data=json.dumps({"post_id": post_id}))
+        post_topics = json.loads(response.__dict__["_content"].decode("utf-8"))
 
-        # get the post_id topics
-        api_url = f"{self.base_url}/get_post_topics_name"
-        response = get(f"{api_url}", headers={"Content-Type": "application/x-www-form-urlencoded"},
-                        data=json.dumps({"post_id": post_id}))
-        interests = json.loads(response.__dict__["_content"].decode("utf-8"))
-
-        # get the opinion on the topics (if present)
-        self.topics_opinions = ""
-        if len(interests) > 0:
-            # get recent sentiment on the selected interests
-            api_url = f"{self.base_url}/get_sentiment"
-            data = {"user_id": self.user_id, "interests": interests}
-            response = post(f"{api_url}", headers={"Content-Type": "application/x-www-form-urlencoded"},
-                            data=json.dumps(data))
-            sentiment = json.loads(response.__dict__["_content"].decode("utf-8"))
-
-            self.topics_opinions = "Your opinion on the topics of the post you are responding to are: "
-            for s in sentiment:
-                self.topics_opinions += f"{s['topic']}: {s['sentiment']} "
-            if len(sentiment) == 0:
-                self.topics_opinions = ""
-
-        u1 = AssistantAgent(
-            name=f"{self.name}",
-            llm_config=self.llm_config,
-            system_message=self.__effify(
-                self.prompts["agent_roleplay_comments_share"], interest=interests
-            ),
-            max_consecutive_auto_reply=1,
-        )
-
-        u2 = AssistantAgent(
-            name=f"Handler",
-            llm_config=self.llm_config,
-            system_message=self.__effify(self.prompts["handler_instructions"]),
-            max_consecutive_auto_reply=1,
-        )
-
-        u2.initiate_chat(
-            u1,
-            message=self.__effify(self.prompts["handler_comment"], conv=conv),
-            silent=True,
-            max_round=1,
-        )
-
-        emotion_eval = u2.chat_messages[u1][-1]["content"].lower()
-        emotion_eval = self.__clean_emotion(emotion_eval)
-
-        post_text = u2.chat_messages[u1][-2]["content"]
-
-        # cleaning the post text of some unwanted characters
-        post_text = self.__clean_text(post_text)
+        handler_comment_prompt = self.prompts["handler_comment_misinfo"] if self.is_misinfo else self.prompts["handler_comment"]
+        handler_message = self._effify(handler_comment_prompt, topic=post_topics[0]["name"], toxicity=toxicity_to_label(self.toxicity_comment, self.llm_language), conv=conv)
+        
+        api_type = self.llm_config['config_list'][0]['api_type']
+        if api_type == "hf":
+            prompt = f"{agent_prompt}\n\n{handler_message}"
+            post_text = query_huggingface(prompt, llm_config=self.llm_config)
+            emotion_eval = []
+        elif api_type == "url":
+            prompt = f"{agent_prompt}\n\n{handler_message}"
+            post_text = query_model(prompt, llm_config=self.llm_config)
+            emotion_eval = []
+        else:
+            _, chat_messages = query_assistant(self.name, self.llm_config, agent_prompt, handler_prompt, handler_message)
+            post_text = chat_messages[-2]["content"]
+            emotion_eval = chat_messages[-1]["content"].lower()
+            emotion_eval = self._clean_emotion(emotion_eval)
+        
+        hashtags = self._extract_components(post_text, c_type="hashtags")
+        mentions = self._extract_components(post_text, c_type="mentions")
 
         # avoid posting empty messages
-        if len(post_text) < 3:
+        if len(post_text) < 3 or len(mentions) == 0:
             return
-
-        hashtags = self.__extract_components(post_text, c_type="hashtags")
-        mentions = self.__extract_components(post_text, c_type="mentions")
+        
+        # Cleanup text
+        post_text = self._remove_components(post_text, hashtags)
+        post_text = self._remove_components(post_text, mentions)
+        post_text = self._clean_text(post_text)
+        
+        # Define tartget post id
+        target_post = post_id
+        if len(mentions) == 1:
+            try:
+                target_username = mentions[0].replace("@", "")
+                target_post = latest_posts[target_username]
+            except:
+                pass
 
         st = json.dumps(
             {
                 "user_id": self.user_id,
-                "post_id": post_id,
-                "text": post_text.replace('"', "")
-                .replace(f"{self.name}", "")
-                .replace(":", "")
-                .replace("*", ""),
+                "post_id": target_post,
+                "text": post_text,
                 "emotions": emotion_eval,
                 "hashtags": hashtags,
                 "mentions": mentions,
                 "tid": tid,
+                "src_language": self.llm_language,
+                "tgt_language": self.language
             }
         )
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
         api_url = f"{self.base_url}/comment"
-        post(f"{api_url}", headers=headers, data=st)
-        res = self.__evaluate_follow(post_text, post_id, "follow", tid)
+        self.session.post(f"{api_url}", headers=API_HEADERS, data=st)
+        self.memory += f"You read the thread:\n{conv}\n\n"
+        formatted_comment = f"{' '.join(mentions)} {post_text} {' '.join(hashtags)}".strip()
+        self.memory += f"You commented:\n\"{formatted_comment}\"\n\n"
 
         # update topic of interest with the ones from the post
-        # get the root post id
         api_url = f"{self.base_url}/get_thread_root"
-        response = get(
-            f"{api_url}", headers=headers, data=json.dumps({"post_id": post_id})
-        )
-        data = json.loads(response.__dict__["_content"].decode("utf-8"))
-        self.__update_user_interests(data, tid)
+        response = self.session.get(f"{api_url}", headers=API_HEADERS, data=json.dumps({"post_id": post_id}))
+        if response.status_code != 200:
+            print(f"\n\nError in getting root for post {post_id}: {response.status_code}, {response.text}\nInterests not updated.\n\n")
+            return 
+        root_post_id = response.text
+        self._update_user_interests(root_post_id, tid)
 
-        # if not followed, test unfollow
-        if res is None:
-            self.__evaluate_follow(post_text, post_id, "unfollow", tid)
-
-    def __update_user_interests(self, post_id, tid):
+    def _update_user_interests(self, post_id, tid):
         """
         Update the user interests based on the post topics.
 
         :param post_id: id of the post
         :param tid: round id
         """
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
         api_url = f"{self.base_url}/get_post_topics"
-        data = {"post_id": post_id}
-        response = get(f"{api_url}", headers=headers, data=json.dumps(data))
+        response = self.session.get(f"{api_url}", headers=API_HEADERS, data=json.dumps({"post_id": post_id}))
         data = json.loads(response.__dict__["_content"].decode("utf-8"))
+        topic_ids = [t["id"] for t in data]
+
         if len(data) > 0:
             api_url = f"{self.base_url}/set_user_interests"
-            data = {"user_id": self.user_id, "interests": data, "round": tid}
-            post(f"{api_url}", headers=headers, data=json.dumps(data))
+            data = {"user_id": self.user_id, "interests": topic_ids, "round": tid}
+            self.session.post(f"{api_url}", headers=API_HEADERS, data=json.dumps(data))
 
     def share(self, post_id: int, tid):
         """
@@ -859,10 +912,10 @@ class Agent(object):
         # interests, _ = self.__get_interests(tid)
 
         # get the post_id topics
-        api_url = f"{self.base_url}/get_post_topics_name"
-        response = get(f"{api_url}", headers={"Content-Type": "application/x-www-form-urlencoded"},
-                       data=json.dumps({"post_id": post_id}))
-        interests = json.loads(response.__dict__["_content"].decode("utf-8"))
+        api_url = f"{self.base_url}/get_post_topics"
+        response = self.session.get(f"{api_url}", headers=API_HEADERS, data=json.dumps({"post_id": post_id}))
+        topics = json.loads(response.__dict__["_content"].decode("utf-8"))
+        interests = [t["name"] for t in topics]
 
         # get the opinion on the topics (if present)
         self.topics_opinions = ""
@@ -870,8 +923,7 @@ class Agent(object):
             # get recent sentiment on the selected interests
             api_url = f"{self.base_url}/get_sentiment"
             data = {"user_id": self.user_id, "interests": interests}
-            response = post(f"{api_url}", headers={"Content-Type": "application/x-www-form-urlencoded"},
-                            data=json.dumps(data))
+            response = self.session.post(f"{api_url}", headers=API_HEADERS, data=json.dumps(data))
             sentiment = json.loads(response.__dict__["_content"].decode("utf-8"))
 
             self.topics_opinions = "Your opinion topics of the post you are responding to are: "
@@ -880,38 +932,29 @@ class Agent(object):
             if len(sentiment) == 0:
                 self.topics_opinions = ""
         else:
-            interests, _ = self.__get_interests(tid)
+            interests, _ = self._get_interests(tid)
 
-        u1 = AssistantAgent(
-            name=f"{self.name}",
-            llm_config=self.llm_config,
-            system_message=self.__effify(
-                self.prompts["agent_roleplay_comments_share"], interest=interests
-            ),
-            max_consecutive_auto_reply=1,
-        )
+        api_type = self.llm_config['config_list'][0]['api_type']
 
-        u2 = AssistantAgent(
-            name=f"Handler",
-            llm_config=self.llm_config,  # self.llm_config,
-            system_message=self.__effify(self.prompts["handler_instructions"]),
-            max_consecutive_auto_reply=1,
-        )
+        agent_prompt = self._effify(self.prompts["agent_roleplay_comments_share"], interest=interests)
+        handler_prompt = self._effify(self.prompts["handler_instructions"])
+        handler_message = self._effify(self.prompts["handler_share"], article=article, post_text=post_text)
+        
+        if api_type == "hf":
+            prompt = f"{agent_prompt}\n\n{handler_message}"
+            post_text = query_huggingface(prompt, llm_config=self.llm_config)
+            emotion_eval = []
+        elif api_type == "url":
+            prompt = f"{agent_prompt}\n\n{handler_message}"
+            post_text = query_model(prompt, llm_config=self.llm_config)
+            emotion_eval = []
+        else:
+            _, chat_messages = query_assistant(self.name, self.llm_config, agent_prompt, handler_prompt, handler_message)
+            post_text = chat_messages[-2]["content"]
 
-        u2.initiate_chat(
-            u1,
-            message=self.__effify(
-                self.prompts["handler_share"], article=article, post_text=post_text
-            ),
-            silent=True,
-            max_round=1,
-        )
-
-        emotion_eval = u2.chat_messages[u1][-1]["content"].lower()
-        emotion_eval = self.__clean_emotion(emotion_eval)
-
-        post_text = u2.chat_messages[u1][-2]["content"]
-
+            emotion_eval = chat_messages[-1]["content"].lower()
+            emotion_eval = self._clean_emotion(emotion_eval)
+            
         post_text = (
             post_text.split(":")[-1]
             .split("-")[-1]
@@ -925,8 +968,8 @@ class Agent(object):
         )
         post_text = post_text.replace(f"@{self.name}", "")
 
-        hashtags = self.__extract_components(post_text, c_type="hashtags")
-        mentions = self.__extract_components(post_text, c_type="mentions")
+        hashtags = self._extract_components(post_text, c_type="hashtags")
+        mentions = self._extract_components(post_text, c_type="mentions")
 
         st = json.dumps(
             {
@@ -940,12 +983,10 @@ class Agent(object):
             }
         )
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-
         api_url = f"{self.base_url}/share"
-        post(f"{api_url}", headers=headers, data=st)
+        self.session.post(f"{api_url}", headers=API_HEADERS, data=st)
 
-    def reaction(self, post_id: int, tid: int, check_follow=True):
+    def reaction(self, post_id: int, tid: int, check_follow=True, agent_prompt=None):
         """
         Generate a reaction to a post/comment.
 
@@ -954,76 +995,73 @@ class Agent(object):
         :param check_follow: whether to evaluate a follow cascade action
         :return: the response from the service
         """
-
-        post_text = self.__get_post(post_id)
-
-        u1 = AssistantAgent(
-            name=f"{self.name}",
-            llm_config=self.llm_config,
-            system_message=self.__effify(self.prompts["agent_roleplay_simple"]),
-            max_consecutive_auto_reply=1,
-        )
-
-        u2 = AssistantAgent(
-            name=f"Handler",
-            llm_config=self.llm_config,  # self.llm_config,
-            system_message=self.__effify(self.prompts["handler_instructions_simple"]),
-            max_consecutive_auto_reply=0,
-        )
-
-        u2.initiate_chat(
-            u1,
-            message=self.__effify(
-                self.prompts["handler_reactions"], post_text=post_text
-            ),
-            silent=True,
-            max_round=1,
-        )
-
-        text = u1.chat_messages[u2][-1]["content"].replace("!", "")
-
-        u1.reset()
-        u2.reset()
-
-        if "YES" in text.split():
-            st = json.dumps(
-                {
-                    "user_id": self.user_id,
-                    "post_id": post_id,
-                    "type": "like",
-                    "tid": tid,
-                }
-            )
-            flag = "follow"
-
-        elif "NO" in text.split():
-            st = json.dumps(
-                {
-                    "user_id": self.user_id,
-                    "post_id": post_id,
-                    "type": "dislike",
-                    "tid": tid,
-                }
-            )
-            flag = "unfollow"
-            # always evaluate unfollow in case of dislike
-            self.__evaluate_follow(post_text, post_id, flag, tid)
-        else:
+        api_url = f"{self.base_url}/get_post_author"
+        response = self.session.get(f"{api_url}", headers=API_HEADERS, data=json.dumps({"post_id": post_id}))
+        post_author = json.loads(response.__dict__["_content"].decode("utf-8"))
+        if post_author == self.user_id:
             return
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        post_text = self.__get_post(post_id)
+        if post_text is None:
+            return
+        
+        topic_descr = "\n".join([f" - {topic.capitalize()}: {TOPIC_DESCRIPTION[topic.lower()]}" for topic in self.interests if topic.lower() in TOPIC_DESCRIPTION])
+        current_opinion = opinions_to_str(self.opinions, self.interests)
+        coalition_opinion = opinions_to_str(self.coalition_program, self.interests)
+        
+        agent_prompt = self._effify(self.prompts["agent_roleplay"], topic_descriptions=topic_descr, coalition_opinion=coalition_opinion, opinion=current_opinion) if agent_prompt is None else agent_prompt
+        handler_prompt = self._effify(self.prompts["handler_instructions_simple"])
+        handler_message = self._effify(self.prompts["handler_reactions"], post_text=post_text)
 
+        api_type = self.llm_config['config_list'][0]['api_type']
+        if api_type == "hf":
+            prompt = f"{agent_prompt}\n\n{handler_message}"
+            text = query_huggingface(prompt, llm_config=self.llm_config)
+        elif api_type == "url":
+            prompt = f"{agent_prompt}\n\n{handler_message}"
+            text = query_model(prompt, llm_config=self.llm_config)
+        else:
+            chat_messages, _ = query_assistant(self.name, self.llm_config, agent_prompt, handler_prompt, handler_message)
+            text = chat_messages[-2]["content"].replace("!", "")
+
+        text = text.split()
+        if not (("YES" in text) ^ ("NO" in text)):  
+            return
+        
+        reaction = "like" if "YES" in text else "dislike"
+        
+        st = json.dumps(
+                {
+                    "user_id": self.user_id,
+                    "post_id": post_id,
+                    "type": reaction,
+                    "tid": tid,
+                }
+            )
+
+        # add reaction
         api_url = f"{self.base_url}/reaction"
-        post(f"{api_url}", headers=headers, data=st)
-
-        # evaluate follow only upon explicit request
-        if check_follow and flag == "follow":
-            self.__evaluate_follow(post_text, post_id, flag, tid)
+        self.session.post(f"{api_url}", headers=API_HEADERS, data=st)
+        self.memory += f"\n\nYou reacted with a '{reaction.upper()}' to the following tweet:\n\"{post_text}\"\n\n"
 
         # update user interests after reaction
-        self.__update_user_interests(post_id, tid)
+        self._update_user_interests(post_id, tid)
+        
+        # get follow relationship
+        target_user = self.get_user_from_post(post_id)
+        data = {"user_id": self.user_id, "target": target_user}
 
-    def __evaluate_follow(self, post_text, post_id, action, tid):
+        api_url = f"{self.base_url}/follow_status"
+        response = self.session.post(f"{api_url}", headers=API_HEADERS, data=json.dumps(data))
+        follow_status = json.loads(response.__dict__["_content"].decode("utf-8"))["status"]
+
+        # evaluate follow/unfollow
+        if "YES" in text and follow_status != "follow" and check_follow:
+            self.evaluate_follow(post_text, post_id, "follow", tid)
+        elif "NO" in text and follow_status == "follow":
+            self.evaluate_follow(post_text, post_id, "unfollow", tid)
+
+    def evaluate_follow(self, post_text, post_id, action, tid, agent_prompt=None):
         """
         Evaluate a follow action.
 
@@ -1031,78 +1069,67 @@ class Agent(object):
         :param post_id: the post id
         :param action: the action, either follow or unfollow
         :param tid: the round id
+        :param action_descr: the action description to include in the prompt
         :return: the response from the service
         """
+        api_url = f"{self.base_url}/get_post_author"
+        response = self.session.get(f"{api_url}", headers=API_HEADERS, data=json.dumps({"post_id": post_id}))
+        post_author = json.loads(response.__dict__["_content"].decode("utf-8"))
+        if post_author == self.user_id:
+            return
+        
+        locale = LOCALES.get(self.llm_language.lower())
+        action_loc = TRANSLATIONS[locale].get(action, action)
 
-        u1 = AssistantAgent(
-            name=f"{self.name}",
-            llm_config=self.llm_config,
-            system_message=self.__effify(self.prompts["agent_roleplay_simple"]),
-            max_consecutive_auto_reply=1,
-        )
+        topic_descr = "\n".join([f" - {topic.capitalize()}: {TOPIC_DESCRIPTION[topic.lower()]}" for topic in self.interests if topic.lower() in TOPIC_DESCRIPTION])
+        current_opinion = opinions_to_str(self.opinions, self.interests)
+        coalition_opinion = opinions_to_str(self.coalition_program, self.interests)
 
-        u2 = AssistantAgent(
-            name=f"Handler",
-            llm_config=self.llm_config,
-            system_message=self.__effify(self.prompts["handler_instructions_simple"]),
-            max_consecutive_auto_reply=0,
-        )
-
-        u2.initiate_chat(
-            u1,
-            message=self.__effify(
-                self.prompts["handler_follow"], post_text=post_text, action=action
-            ),
-            silent=True,
-            max_round=1,
-        )
-
-        text = u1.chat_messages[u2][-1]["content"].replace("!", "")
-
-        u1.reset()
-        u2.reset()
+        api_type = self.llm_config['config_list'][0]['api_type']
+        agent_prompt = self._effify(self.prompts["agent_roleplay"], topic_descriptions=topic_descr, coalition_opinion=coalition_opinion, opinion=current_opinion) if agent_prompt is None else agent_prompt
+        handler_prompt = self._effify(self.prompts["handler_instructions_simple"])
+        handler_message = self._effify(self.prompts["handler_follow"], post_text=post_text, action=action_loc)
+        
+        if api_type == "hf":
+            prompt = f"{agent_prompt}\n\n{handler_message}"
+            text = query_huggingface(prompt, llm_config=self.llm_config)
+        elif api_type == "url":
+            prompt = f"{agent_prompt}\n\n{handler_message}"
+            text = query_model(prompt, llm_config=self.llm_config)
+        else:
+            chat_messages, _ = query_assistant(self.name, self.llm_config, agent_prompt, handler_prompt, handler_message)
+            text = chat_messages[-2]["content"].replace("!", "")
 
         if "YES" in text.split():
-            if action == "follow":
-                # follow with a probability of 0.2 (@ToDo: make this a parameter?)
-                if np.random.rand() < 0.2:
-                    self.follow(post_id=post_id, action=action, tid=tid)
-                    return action
-            else:
-                self.follow(post_id=post_id, action=action, tid=tid)
-                return action
+            self.follow(post_id=post_id, action=action, tid=tid)
+            self.memory += f"You decided to {action.upper()} the author of the following tweet:\n\"{post_text}\"\n\n"
+            return action
         else:
             return None
 
-    def follow(
-        self, tid: int, target: int = None, post_id: int = None, action="follow"
-    ):
+    def follow(self, tid: int, target_id: int = None, post_id: int = None, action="follow"):
         """
         Follow a user
 
         :param tid: the round id
         :param action: the action, either follow or unfollow
         :param post_id: the post id
-        :param post_id: the post id
         :param target: the target user id
         """
-
         if post_id is not None:
-            target = self.get_user_from_post(post_id)
+            target_id = self.get_user_from_post(post_id)
 
         st = json.dumps(
             {
                 "user_id": self.user_id,
-                "target": int(target),
+                "target": int(target_id),
                 "action": action,
                 "tid": tid,
             }
         )
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-
         api_url = f"{self.base_url}/follow"
-        post(f"{api_url}", headers=headers, data=st)
+        self.session.post(f"{api_url}", headers=API_HEADERS, data=st)
 
     def followers(self):
         """
@@ -1113,10 +1140,8 @@ class Agent(object):
 
         st = json.dumps({"user_id": self.user_id})
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-
         api_url = f"{self.base_url}/followers"
-        response = get(f"{api_url}", headers=headers, data=st)
+        response = self.session.get(f"{api_url}", headers=API_HEADERS, data=st)
 
         return response.__dict__["_content"].decode("utf-8")
 
@@ -1129,10 +1154,8 @@ class Agent(object):
 
         st = json.dumps({"user_id": self.user_id})
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-
         api_url = f"{self.base_url}/timeline"
-        response = get(f"{api_url}", headers=headers, data=st)
+        response = self.session.get(f"{api_url}", headers=API_HEADERS, data=st)
 
         return response.__dict__["_content"].decode("utf-8")
 
@@ -1147,31 +1170,24 @@ class Agent(object):
 
         post_text = self.__get_post(post_id)
 
-        u1 = AssistantAgent(
-            name=f"{self.name}",
-            llm_config=self.llm_config,
-            system_message=self.__effify(self.prompts["agent_roleplay_simple"]),
-            max_consecutive_auto_reply=1,
-        )
+        topic_descr = "\n".join([f" - {topic.capitalize()}: {TOPIC_DESCRIPTION[topic.lower()]}" for topic in self.interests if topic.lower() in TOPIC_DESCRIPTION])
+        current_opinion = opinions_to_str(self.opinions, self.interests)
+        coalition_opinion = opinions_to_str(self.coalition_program, self.interests)
+        api_type = self.llm_config['config_list'][0]['api_type']
 
-        u2 = AssistantAgent(
-            name=f"Handler",
-            llm_config=self.llm_config,  # self.llm_config,
-            system_message=self.__effify(self.prompts["handler_instructions_simple"]),
-            max_consecutive_auto_reply=0,
-        )
+        agent_prompt = self._effify(self.prompts["agent_roleplay"], topic_descriptions=topic_descr, coalition_opinion=coalition_opinion, opinion=current_opinion)
+        handler_prompt = self._effify(self.prompts["handler_instructions_simple"])
+        handler_message = self._effify(self.prompts["handler_cast"], post_text=post_text)
 
-        u2.initiate_chat(
-            u1,
-            message=self.__effify(self.prompts["handler_cast"], post_text=post_text),
-            silent=True,
-            max_round=1,
-        )
-
-        text = u1.chat_messages[u2][-1]["content"].replace("!", "").upper()
-
-        u1.reset()
-        u2.reset()
+        if api_type == "hf":
+            prompt = f"{agent_prompt}\n\n{handler_message}"
+            text = query_huggingface(prompt, llm_config=self.llm_config)
+        elif api_type == "url":
+            prompt = f"{agent_prompt}\n\n{handler_message}"
+            text = query_model(prompt, llm_config=self.llm_config)
+        else:
+            chat_messages, _ = query_assistant(self.name, self.llm_config, agent_prompt, handler_prompt, handler_message)
+            text = chat_messages[-2]["content"].replace("!", "").upper()
 
         data = {
             "user_id": self.user_id,
@@ -1195,10 +1211,8 @@ class Agent(object):
         else:
             return
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-
         api_url = f"{self.base_url}/cast_preference"
-        post(f"{api_url}", headers=headers, data=st)
+        self.session.post(f"{api_url}", headers=API_HEADERS, data=st)
 
     def churn_system(self, tid):
         """
@@ -1208,10 +1222,8 @@ class Agent(object):
         """
         st = json.dumps({"user_id": self.user_id, "left_on": tid})
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-
         api_url = f"{self.base_url}/churn"
-        response = post(f"{api_url}", headers=headers, data=st)
+        response = self.session.post(f"{api_url}", headers=API_HEADERS, data=st)
 
         return response.__dict__["_content"].decode("utf-8")
 
@@ -1226,30 +1238,23 @@ class Agent(object):
         np.random.shuffle(actions)
         acts = ",".join(actions)
 
-        u1 = AssistantAgent(
-            name=f"{self.name}",
-            llm_config=self.llm_config,
-            system_message=self.__effify(self.prompts["agent_roleplay_base"]),
-            max_consecutive_auto_reply=1,
-        )
+        agent_prompt = self._effify(self.prompts["agent_roleplay_base"])
+        handler_prompt = self._effify(self.prompts["handler_instructions_simple"])
+        handler_message = self._effify(self.prompts["handler_action"], actions=acts)        
 
-        u2 = AssistantAgent(
-            name=f"Handler",
-            llm_config=self.llm_config,
-            system_message=self.__effify(self.prompts["handler_instructions_simple"]),
-            max_consecutive_auto_reply=0,
-        )
+        api_type = self.llm_config['config_list'][0]['api_type']
 
-        u2.initiate_chat(
-            u1,
-            message=self.__effify(self.prompts["handler_action"], actions=acts),
-            silent=True,
-            max_round=1,
-        )
+        if api_type == "hf":
+            prompt = f"{agent_prompt}\n\n{handler_message}"
+            text = query_huggingface(prompt, llm_config=self.llm_config)
+        elif api_type == "url":
+            prompt = f"{agent_prompt}\n\n{handler_message}"
+            text = query_model(prompt, llm_config=self.llm_config)
+        else:
+            chat_messages, _ = query_assistant(self.name, self.llm_config, agent_prompt, handler_prompt, handler_message)
+            text = chat_messages[-2]["content"]
 
-        text = u1.chat_messages[u2][-1]["content"].replace("!", "").upper()
-        u1.reset()
-        u2.reset()
+        text = text.replace("!", "").upper()
 
         if "COMMENT" in text.split():
             candidates = json.loads(self.read())
@@ -1273,15 +1278,6 @@ class Agent(object):
             except:
                 pass
 
-        # elif "REPLY" in text.split():
-        #    selected_post = json.loads(self.read_mentions())
-        #    if "status" not in selected_post:
-        #        self.comment(
-        #            int(selected_post[0]),
-        #            max_length_threads=max_length_thread_reading,
-        #            tid=tid,
-        #        )
-
         elif "SEARCH" in text.split():
             candidates = json.loads(self.search())
             if "status" not in candidates and len(candidates) > 0:
@@ -1294,22 +1290,7 @@ class Agent(object):
                 self.reaction(int(selected_post[0]), check_follow=False, tid=tid)
 
         elif "FOLLOW" in text.split():
-            candidates = self.search_follow()
-            if len(candidates) > 0:
-                tot = sum([float(v) for v in candidates.values()])
-                probs = [v / tot for v in candidates.values()]
-                selected = np.random.choice(
-                    [int(c) for c in candidates],
-                    p=probs,
-                    size=1,
-                )[0]
-                self.follow(tid=tid, target=selected, action="follow")
-
-        # demanded to page agents
-        # elif "NEWS" in text.split():
-        #    news, website = self.select_news()
-        #    if not isinstance(news, str):
-        #        self.news(tid=tid, article=news, website=website)
+            self.search_and_follow(tid)
 
         elif "SHARE" in text.split():
             candidates = json.loads(self.read(article=True))
@@ -1331,6 +1312,142 @@ class Agent(object):
                 self.comment_image(image, tid=tid, article_id=article_id)
 
         return
+
+    def select_action_prob(self, tid, max_length_thread_reading=5, min_read=0):
+        """
+        Select the action to do based on the activity likelihood.
+
+        :param actions: The list of actions to select from.
+        :param tid: The time id.
+        :param max_length_thread_reading: The maximum length of the thread to read.
+        """
+        p_post = self.activity_post
+        p_comment = self.activity_comment
+        total =  p_comment + p_post
+        p_read = max(min_read, 1 - total)
+        
+        if total > 1 - min_read:
+            scale = (1 - min_read) / total
+            p_post *= scale
+            p_comment *= scale
+            p_read = min_read
+        
+        action = random.choices(["comment", "post", "read"], weights=[p_comment, p_post, p_read])[0]
+        self.perform_action(action, tid, max_length_thread_reading)
+    
+    def perform_action(self, action, tid, max_length_thread_reading=5):
+        candidates = json.loads(self.read())
+
+        if len(candidates) == 0 or action=="post":
+            self.post(tid=tid)
+
+        elif action == "comment":
+            selected_post = random.sample(candidates, 1)
+            self.comment(int(selected_post[0]), max_length_threads=max_length_thread_reading, tid=tid)
+            self.reaction(int(selected_post[0]), tid=tid)
+
+        elif action=="read":
+            selected_post = random.sample(candidates, 1)
+            self.reaction(int(selected_post[0]), tid=tid)
+
+    def init_opinions(self):
+        api_url = f"{self.base_url}/init_opinions"
+        self.session.post(f"{api_url}", headers=API_HEADERS, data=json.dumps({"user_id": self.user_id, "coalition": self.leaning}))
+        self._fetch_opinions()
+        self.opinions = self.coalition_program
+
+    def update_opinions(self, tid):
+        if self.memory == "":
+            return
+        
+        interest_names = self._get_interests_to_update(tid)
+        llm_scores = self.evaluate_opinion(interest_names)
+        updated_topics = list(llm_scores.keys())
+
+        try:
+            # Update with API
+            data = {
+                "user_id": self.user_id, 
+                "interests": updated_topics, 
+                "tid": tid, 
+                "susceptibility": self.susceptibility,
+                "method": self.opinion_model,
+                "llm_scores": [llm_scores[i]["score"] for i in updated_topics],
+                "descriptions": [llm_scores[i]['description'] for i in updated_topics],
+            }
+            api_url = f"{self.base_url}/update_opinion"
+            self.session.post(f"{api_url}", headers=API_HEADERS, data=json.dumps(data))
+            self._fetch_opinions()
+
+            # Update agent opinions and memory
+            for i in updated_topics:
+                self.opinions[i]['label'] = llm_scores[i]['label']
+                self.opinions[i]['description'] = llm_scores[i]['description']
+
+            self.memory = ""
+        except:
+            print(f"\nERROR: user {self.user_id} updating opinions on interests: {interest_names}.")
+
+    def evaluate_opinion(self, interests):
+        current_opinions = opinions_to_str(self.opinions, interests)
+        coalition_opinion = opinions_to_str(self.coalition_program, interests)
+        bias_instructions = BIAS_INSTRUCTIONS["strong_confirmation"] if self.is_misinfo else BIAS_INSTRUCTIONS["base_confirmation"]
+        topic_descr = "\n".join([f" - {topic.capitalize()}: {TOPIC_DESCRIPTION[topic.lower()]}" for topic in interests if topic.lower() in TOPIC_DESCRIPTION])
+
+        agent_prompt = self._effify(self.prompts["agent_roleplay"], topic_descriptions=topic_descr, coalition_opinion=coalition_opinion, opinion=current_opinions)
+        handler_prompt = self._effify(self.prompts["handler_instructions_simple"])
+        handler_message = self._effify(self.prompts["handler_update_opinions"], topics=interests, bias_instructions=bias_instructions)
+
+        api_type = self.llm_config['config_list'][0]['api_type']
+        if api_type == "hf":
+            prompt = f"{agent_prompt}\n\n{handler_message}"
+            text = query_huggingface(prompt, llm_config=self.llm_config)
+        elif api_type == "url":
+            prompt = f"{agent_prompt}\n\n{handler_message}"
+            text = query_model(prompt, llm_config=self.llm_config)
+        else:
+            chat_messages, _ = query_assistant(self.name, self.llm_config, agent_prompt, handler_prompt, handler_message)
+            text = chat_messages[-2]["content"]
+
+        new_opinions = parse_opinions(text, interests)
+        updated_opinions = {}
+        for opinion in new_opinions:
+            topic = opinion['topic']
+            new_score = opinion['score']
+
+            updated_opinions[topic] = {
+                "score": new_score,
+                'label': SCORE_TO_OPINION_TAG[new_score] if new_score in SCORE_TO_OPINION_TAG else '', 
+                'description': opinion['description']
+            }
+
+        return updated_opinions
+    
+    def _fetch_opinions(self):
+        st = {
+            "user_id": self.user_id,
+            "interests": self.interests
+        }
+        api_url = f"{self.base_url}/get_opinions"
+        response = self.session.get(f"{api_url}", headers=API_HEADERS, data=json.dumps(st)) 
+
+        try:
+            opinions = json.loads(response.__dict__["_content"].decode("utf-8"))
+            self.opinions = {op['topic']: {'label': SCORE_TO_OPINION_TAG[op['score_llm']], 'description': op['description']} for op in opinions}
+        except:
+            self.opinions = {}
+    
+    def search_and_follow(self, tid):
+        candidates = self.get_follow_suggestions()
+        if len(candidates) > 0:
+            tot = sum([float(v) for v in candidates.values()])
+            probs = [v / tot for v in candidates.values()]
+            selected = np.random.choice(
+                [int(c) for c in candidates],
+                p=probs,
+                size=1,
+            )[0]
+            self.follow(tid=tid, target_id=selected, action="follow")
 
     def reply(self, tid: int, max_length_thread_reading: int = 5):
         """
@@ -1356,6 +1473,7 @@ class Agent(object):
         :param article: whether to read an article or not
         :return: the response from the service
         """
+
         return self.content_rec_sys.read(self.base_url, self.user_id, article)
 
     def read_mentions(self):
@@ -1374,7 +1492,7 @@ class Agent(object):
         """
         return self.content_rec_sys.search(self.base_url)
 
-    def search_follow(self):
+    def get_follow_suggestions(self):
         """
         Read n_posts from the service.
 
@@ -1512,40 +1630,30 @@ class Agent(object):
         :return:
         """
         # obtain the most recent (and frequent) interests of the agent
-        interests, _ = self.__get_interests(tid)
+        interests, _ = self._get_interests(tid)
 
         self.topics_opinions = ""
 
-        u1 = AssistantAgent(
-            name=f"{self.name}",
-            llm_config=self.llm_config,
-            system_message=self.__effify(
-                self.prompts["agent_roleplay_comments_share"], interest=[]  # interests
-            ),
-            max_consecutive_auto_reply=1,
-        )
+        api_type = self.llm_config['config_list'][0]['api_type']
+        agent_prompt = self._effify(self.prompts["agent_roleplay_comments_share"])
+        handler_prompt = self._effify(self.prompts["handler_instructions"])
+        handler_message = self._effify(self.prompts["handler_comment_image"], descr=image.description)
 
-        u2 = AssistantAgent(
-            name=f"Handler",
-            llm_config=self.llm_config,
-            system_message=self.__effify(self.prompts["handler_instructions"]),
-            max_consecutive_auto_reply=1,
-        )
+        if api_type == "hf":
+            prompt = f"{agent_prompt}\n\n{handler_message}"
+            post_text = query_huggingface(prompt, llm_config=self.llm_config)
+            emotion_eval = []
+        elif api_type == "url":
+            prompt = f"{agent_prompt}\n\n{handler_message}"
+            post_text = query_model(prompt, llm_config=self.llm_config)
+            emotion_eval = []
+        else:
+            _, chat_messages = query_assistant(self.name, self.llm_config, agent_prompt, handler_prompt, handler_message)
+            post_text = chat_messages[-2]["content"]
 
-        u2.initiate_chat(
-            u1,
-            message=self.__effify(
-                self.prompts["handler_comment_image"], descr=image.description
-            ),
-            silent=True,
-            max_round=1,
-        )
-
-        emotion_eval = u2.chat_messages[u1][-1]["content"].lower()
-
-        emotion_eval = self.__clean_emotion(emotion_eval)
-
-        post_text = u2.chat_messages[u1][-2]["content"]
+            emotion_eval = chat_messages[-1]["content"].lower()
+            emotion_eval = self._clean_emotion(emotion_eval)
+            
 
         # cleaning the post text of some unwanted characters
         # post_text = self.__clean_text(post_text)
@@ -1554,7 +1662,7 @@ class Agent(object):
         if len(post_text) < 3:
             return
 
-        hashtags = self.__extract_components(post_text, c_type="hashtags")
+        hashtags = self._extract_components(post_text, c_type="hashtags")
 
         st = json.dumps(
             {
@@ -1572,9 +1680,8 @@ class Agent(object):
             }
         )
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
         api_url = f"{self.base_url}/comment_image"
-        post(f"{api_url}", headers=headers, data=st)
+        self.session.post(f"{api_url}", headers=API_HEADERS, data=st)
 
     def __str__(self):
         """
@@ -1591,7 +1698,7 @@ class Agent(object):
         :return: the dictionary representation
         """
 
-        interests = self.__get_interests(-1)
+        interests = self._get_interests(-1, n_max=len(self.interests))
 
         return {
             "name": self.name,
@@ -1617,9 +1724,18 @@ class Agent(object):
             "toxicity": self.toxicity,
             "joined_on": self.joined_on,
             "is_page": self.is_page,
+            "original_id": getattr(self, 'original_id', 0),
+            "toxicity_posts_avg": getattr(self, 'toxicity_posts_avg', 0),
+            "toxicity_posts_var": getattr(self, 'toxicity_posts_var', 0),
+            "toxicity_comment": getattr(self, 'toxicity_comment', 0),
+            "activity_post": getattr(self, 'activity_post', 0),
+            "activity_comment": getattr(self, 'activity_comment', 0),
+            "reply_coalition": json.loads(json.dumps(getattr(self, 'reply_coalition', {}), default=str)) if hasattr(self, 'reply_coalition') else None,
+            "is_misinfo": getattr(self, 'is_misinfo', 0),
+            "susceptibility": getattr(self, 'susceptibility', -1),
         }
 
-    def __clean_emotion(self, text):
+    def _clean_emotion(self, text):
         try:
             emotion_eval = [
                 e.strip()
@@ -1630,29 +1746,34 @@ class Agent(object):
                 .replace("[", " ")
                 .replace("]", " ")
                 .replace(",", " ")
+                .replace("-", " ") 
+                .replace("\n", " ")
                 .split(" ")
                 if e.strip() in self.emotions
             ]
         except:
             emotion_eval = []
         return emotion_eval
+    
+    def _is_valid_tweet(self, text):
+        if "I can't fulfill this request" in text:
+            return False
+        return True
 
-    def __clean_text(self, text):
-        text = (
-            text.split("##")[-1]
-            .replace("-", "")
-            .replace("@ ", "")
-            .replace("  ", " ")
-            .replace(". ", ".")
-            .replace(" ,", ",")
-            .replace("[", "")
-            .replace("]", "")
-            .replace("@,", "")
-            .strip("()[]{}'")
-            .lstrip()
-        )
-        text = text.replace(f"@{self.name}", "")
-        return text
+    def _extract_tweet(self, text):
+        if not self._is_valid_tweet(text):
+            return ""
+        
+        cleaned_text = re.sub(r"^[\"']|[\"']$", '', text).strip()
+        return cleaned_text
+
+    def _clean_text(self, s):        
+        s = s.replace(f"@{self.name}", "")
+        s = re.sub(r"^[^A-Za-z]+", "", s).strip()
+        s = s.strip('"')
+        s = re.sub(r"[\-\[\]\*\{\}]", "", s)
+        return s.strip()
+
 
 
 class Agents(object):
@@ -1684,6 +1805,7 @@ class Agents(object):
 
         :param agent: The Profile object to remove.
         """
+        agent_ids = {int(aid): None for aid in agent_ids}
         for agent in self.agents:
             if agent.user_id in agent_ids:
                 self.agents.remove(agent)
@@ -1697,6 +1819,14 @@ class Agents(object):
         """
         for agent in self.agents:
             yield agent
+
+    def get_ids(self):
+        """
+        Get the ids of the agents.
+
+        :return: the ids of the agents
+        """
+        return [p.user_id for p in self.agents]
 
     def __str__(self):
         """

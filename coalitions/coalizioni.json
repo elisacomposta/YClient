@@ -1,0 +1,82 @@
+{
+    "Centre-Left": {
+        "topic_opinion": {
+            "Energia nucleare": {
+                "label": "STRONGLY OPPOSED",
+                "description": "Si punta sulle energie rinnovabili e sull'efficienza energetica come pilastri della transizione ecologica."
+            },
+            "Immigrazione": {
+                "label": "SUPPORTIVE",
+                "description": "Sosteniamo politiche di accoglienza e inclusione, con l'obiettivo di facilitare percorsi di integrazione, garantire diritti ai migranti e costruire un sistema europeo di gestione dell'immigrazione basato sulla solidarietà tra i paesi membri."
+            },
+            "Reddito di cittadinanza": {
+                "label": "SUPPORTIVE",
+                "description": "Siamo favorevoli a un sistema di sostegno al reddito per le persone in difficoltà, ma proponiamo una riforma che corregga le attuali criticità, come il mancato supporto alle famiglie numerose e ai lavoratori precari, e che renda il sussidio più compatibile con l'occupazione."
+            },
+            "Diritti civili": {
+                "label": "STRONGLY SUPPORTIVE",
+                "description": "Sosteniamo l'uguaglianza di genere, i diritti LGBTQIA+, il riconoscimento legale delle coppie dello stesso sesso, la cittadinanza per i bambini nati e cresciuti nel paese e il diritto all'autodeterminazione nel fine vita."
+            }
+        }
+    },
+    "M5S": {
+        "topic_opinion": {
+            "Energia nucleare": {
+                "label": "STRONGLY OPPOSED",
+                "description": "Siamo contrari al nucleare per i suoi alti costi, i rischi di sicurezza e i rifiuti radioattivi. Sosteniamo le energie rinnovabili come solare ed eolico, puntando su un modello energetico decentralizzato che promuove l'autoproduzione e l'efficienza energetica a livello locale."
+            },
+            "Immigrazione": {
+                "label": "SUPPORTIVE",
+                "description": "Sosteniamo un approccio umanitario, con politiche di integrazione e redistribuzione obbligatoria dei migranti in Europa."
+            },
+            "Reddito di cittadinanza": {
+                "label": "STRONGLY SUPPORTIVE",
+                "description": "Difendiamo con forza il reddito di cittadinanza, proponendo di estenderlo a famiglie numerose, disabili e lavori stagionali."
+            },
+            "Diritti civili": {
+                "label": "STRONGLY SUPPORTIVE",
+                "description": "Sosteniamo l'uguaglianza di genere, i diritti LGBTQIA+, il matrimonio egualitario, la lotta alla violenza di genere e l'inclusione sociale, con proposte concrete per migliorare la protezione e l'integrazione delle minoranze."
+            }
+        }
+    },
+    "Third Pole": {
+        "topic_opinion": {
+            "Energia nucleare": {
+                "label": "SUPPORTIVE",
+                "description": "Siamo favorevoli all'inclusione del nucleare nel mix energetico per raggiungere l'obiettivo di 'emissioni zero' entro il 2050, ritenendolo necessario per soddisfare il fabbisogno energetico futuro in modo sicuro ed efficiente."
+            },
+            "Immigrazione": {
+                "label": "SUPPORTIVE",
+                "description": "Sosteniamo un sistema di immigrazione regolare e programmata, con politiche di integrazione, regolarizzazione per chi ha un lavoro e percorsi di formazione. Proponiamo l'espansione dei corridoi umanitari e l'istituzione di un Ministero per le migrazioni."
+            },
+            "Reddito di cittadinanza": {
+                "label": "OPPOSED",
+                "description": "Riteniamo l'attuale sistema inefficace nel favorire l'occupazione. Proponiamo una revisione che renda il sussidio più mirato ai reali bisognosi, con incentivi alla formazione e al lavoro."
+            },
+            "Diritti civili": {
+                "label": "SUPPORTIVE",
+                "description": "Proponiamo una legge contro l'omotransfobia, l'istituzione di un'Autorità per la lotta alle discriminazioni, l'inclusione delle persone con disabilità e misure di tutela per le donne e le famiglie."
+            }
+        }
+    },
+    "Right": {
+        "topic_opinion": {
+            "Energia nucleare": {
+                "label": "STRONGLY SUPPORTIVE",
+                "description": "Consideriamo il nucleare di ultima generazione strategico per la sicurezza energetica nazionale, da integrare con le rinnovabili."
+            },
+            "Immigrazione": {
+                "label": "STRONGLY OPPOSED",
+                "description": "Siamo contrari all'immigrazione illegale e favorevoli a politiche di controllo più rigide, al blocco navale e alla gestione dei flussi attraverso accordi bilaterali con i paesi di origine."
+            },
+            "Reddito di cittadinanza": {
+                "label": "STRONGLY OPPOSED",
+                "description": "Proponiamo l'abolizione e la sostituzione con strumenti mirati di sostegno al lavoro e alle fasce più deboli, per evitare abusi."
+            },
+            "Diritti civili": {
+                "label": "STRONGLY OPPOSED",
+                "description": "Siamo contrari a riforme che introducano nuovi diritti in materia di famiglia e identità di genere, sostenendo la difesa della 'famiglia tradizionale'."
+            }
+        }
+    }
+}

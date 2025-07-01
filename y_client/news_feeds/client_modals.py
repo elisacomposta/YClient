@@ -11,16 +11,16 @@ try:
 
     # read the experiment configuration (hardcoded config filename is a big issue!)
     config = json.load(open("experiments/current_config.json"))
+    simulation_name = config['simulation']['name']
 
-    if not os.path.exists(f"experiments/{config['simulation']['name']}.db"):
+    if not os.path.exists(f"experiments/{simulation_name}/{simulation_name}.db"):
         # copy the clean database to the experiments folder
         shutil.copyfile(
             f"{BASE_DIR}/../../data_schema/database_clean_client.db",
-            f"{BASE_DIR}/../../experiments/{config['simulation']['name']}.db",
+            f"{BASE_DIR}/../../experiments/{simulation_name}/{simulation_name}.db",
         )
-
     base = declarative_base()
-    engine = db.create_engine(f"sqlite:///experiments/{config['simulation']['name']}.db")
+    engine = db.create_engine(f"sqlite:///experiments/{simulation_name}/{simulation_name}.db")
     base.metadata.bind = engine
     session = orm.scoped_session(orm.sessionmaker())(bind=engine)
 except:

@@ -1,5 +1,5 @@
 from y_client.clients.client_base import YClientBase
-from y_client.utils import generate_page
+from YClient.y_client.generators import generate_page
 import tqdm
 import json
 from y_client import Agent, PageAgent

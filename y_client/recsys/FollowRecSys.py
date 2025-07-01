@@ -1,5 +1,6 @@
 import json
 from requests import post
+from y_client.constants import API_HEADERS
 
 
 class FollowRecSys(object):
@@ -34,9 +35,8 @@ class FollowRecSys(object):
         :return: the response from the service
         """
         api_url = f"{base_url}/follow_suggestions"
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
         st = json.dumps(self.params)
-        response = post(f"{api_url}", headers=headers, data=st)
+        response = post(f"{api_url}", headers=API_HEADERS, data=st)
 
         try:
             return response.json()

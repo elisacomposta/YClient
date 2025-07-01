@@ -3,8 +3,8 @@
     "llm": "http://127.0.0.1:11434/v1",
     "llm_api_key": "NULL",
     "llm_api_type": "open_ai",
-    "llm_max_tokens": 300,
-    "llm_temperature": 0.9,
+    "llm_max_tokens": 200,
+    "llm_temperature": 0.8,
     "llm_v": "http://127.0.0.1:11434/v1",
     "llm_v_api_key": "NULL",
     "llm_v_max_tokens": 300,
@@ -14,13 +14,13 @@
   "simulation": {
     "name": "simulation",
     "client": "YClientBase",
-    "days": 21,
-    "slots": 24,
-    "starting_agents": 60,
+    "days": 2,
+    "slots": 3,
+    "starting_agents": 10,
     "percentage_new_agents_iteration": 0,
     "percentage_removed_agents_iteration": 0,
-    "percentage_misinformation_agents": 0,
-    "opinion_model": "weighted_friedkin_johnsen",
+    "percentage_misinformation_agents": 0.3,
+    "opinion_model": "state_dependent_fj",
     "hourly_activity": {
       "0": 0.015,
       "1": 0.010,
@@ -60,23 +60,15 @@
   },
   "agents": {
     "llm_agents": ["artifish/llama3.2-uncensored"],
-    "llm_language": "English",
+    "llm_language": "Italian",
     "languages": ["italian"],
-    "probability_of_daily_follow": 0.1,
+    "probability_of_daily_follow": 0.5,
+    "daily_actions": {"min": 1, "max": 1},
     "reading_from_follower_ratio": 0.6,
     "max_length_thread_reading": 5,
     "attention_window": 336,
     "political_leanings": [""],
-    "age": {
-      "min": 18, 
-      "max": 60, 
-      "ranges": ["18-24", "25-34", "35-49", "50-60"],
-      "probabilities": [0.345, 0.354, 0.198, 0.078]
-    },
-    "gender": {
-      "categories": ["male", "female"],
-      "probabilities": [0.597, 0.378]
-    },
+    "age": {"min": 18, "max": 60},
     "education_levels": ["N/A"],
     "n_interests": {"min": 4, "max": 4},
     "round_actions": {"min": 1, "max": 1},
@@ -94,9 +86,9 @@
   },
   "agents_init": {
     "user_data_file": "user_data/user_aggregated_data.csv",
-    "min_posts_written": 0,
-    "min_replies_written": 0,
-    "coalition_data_file": "coalitions/coalitions.json"
+    "min_posts_written": 3,
+    "min_replies_written": 3,
+    "coalition_data_file": "coalitions/coalizioni.json"
   },
   "posts": {
     "visibility_rounds": 36,

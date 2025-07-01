@@ -23,7 +23,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-p",
         "--prompts",
-        default="config_files/prompts.json",
+        default="prompts/prompts.json",
         help="JSON file containing LLM prompts",
     )
     parser.add_argument(
@@ -80,16 +80,16 @@ if __name__ == "__main__":
     simulation_name = config["simulation"]["name"]
 
     # agent file output
-    output = f"experiments/{simulation_name}_agents.json"
+    output_path = f"experiments/{simulation_name}"
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
 
     # set the current config file (needed to generate the database)
+    shutil.copyfile(config_file, f"{output_path}/current_config.json")
     shutil.copyfile(config_file, f"experiments/current_config.json")
 
     import y_client.recsys
     import y_client.clients
-
-    if not os.path.exists("./experiments"):
-        os.mkdir("./experiments")
 
     # get recommender systems
     content_recsys = getattr(y_client.recsys, args.crecsys)()
@@ -101,11 +101,10 @@ if __name__ == "__main__":
         prompts_file,
         agents_filename=agents_file,
         owner=agents_owner,
-        agents_output=output,
         graph_file=graph_file,
     )
 
-    if args.reset:
+    if args.reset and args.reset.lower() == 'true':
         experiment.reset_experiment()
     if args.news:
         experiment.reset_news_db()
@@ -115,8 +114,12 @@ if __name__ == "__main__":
 
     if args.agents is None:
         experiment.create_initial_population()
+        experiment.save_agents()
+        experiment.save_experiment(tag="init")
     else:
         experiment.load_existing_agents(args.agents)
 
-    experiment.save_agents()
     experiment.run_simulation()
+
+        
+

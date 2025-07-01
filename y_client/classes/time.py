@@ -12,6 +12,7 @@ class SimulationSlot(object):
         :param config: the configuration dictionary
         """
         self.base_url = config["servers"]["api"]
+        self.n_slots = config["simulation"]["slots"]
 
         api_url = f"{self.base_url}current_time"
 
@@ -49,10 +50,9 @@ class SimulationSlot(object):
         Update the current slot.
         """
         api_url = f"{self.base_url}update_time"
-
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-        if self.slot < 23:
+        if self.slot < self.n_slots - 1:
             slot = self.slot + 1
             day = self.day
         else:

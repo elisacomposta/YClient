@@ -1,6 +1,6 @@
 import json
 from requests import post
-
+from y_client.constants import API_HEADERS
 
 class ContentRecSys(object):
     def __init__(self, n_posts=10, visibility_rounds=36):
@@ -36,16 +36,12 @@ class ContentRecSys(object):
         """
         api_url = f"{base_url}/read"
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-
         if articles:
             self.params["articles"] = True
-
         self.params["uid"] = user_id
-
         st = json.dumps(self.params)
 
-        response = post(f"{api_url}", headers=headers, data=st)
+        response = post(f"{api_url}", headers=API_HEADERS, data=st)
 
         return response.__dict__["_content"].decode("utf-8")
 
@@ -58,10 +54,8 @@ class ContentRecSys(object):
         """
         api_url = f"{base_url}/read_mentions"
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-
         st = json.dumps(self.params)
-        response = post(f"{api_url}", headers=headers, data=st)
+        response = post(f"{api_url}", headers=API_HEADERS, data=st)
 
         return response.__dict__["_content"].decode("utf-8")
 
@@ -74,10 +68,8 @@ class ContentRecSys(object):
         """
         api_url = f"{base_url}/search"
 
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
-
         st = json.dumps(self.params)
-        response = post(f"{api_url}", headers=headers, data=st)
+        response = post(f"{api_url}", headers=API_HEADERS, data=st)
 
         return response.__dict__["_content"].decode("utf-8")
 

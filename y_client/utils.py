@@ -1,159 +1,71 @@
-import random
-import json
-import faker
-try:
-    from y_client import Agent, PageAgent
-except:
-    from y_client.classes.base_agent import Agent
-    from y_client.classes.page_agent import PageAgent
+from .constants import TRANSLATIONS, LOCALES, DEFAULT_SUSCEPTIBILITY, TRAIT_SUSCEPTIBILITY, OPINION_TAG_SCORE
+import numpy as np
+import re
 
-
-def generate_user(config, owner=None):
+def toxicity_to_label(toxicity: float, language: str = "english") -> str:  
     """
-    Generate a fake user
-    :param config: configuration dictionary
-    :param owner: owner of the user
-    :return: Agent object
+    Converts a toxicity score to a label, using a predefined mapping of toxicity levels to labels.
     """
-
-    locales = json.load(open("config_files/nationality_locale.json"))
-    try:
-        nationality = random.sample(config["agents"]["nationalities"], 1)[0]
-    except:
-        nationality = "American"
-
-    gender = random.sample(["male", "female"], 1)[0]
-
-    fake = faker.Faker(locales[nationality])
-
-    if gender == "male":
-        name = fake.name_male()
+    if toxicity is None or toxicity < 0.2:
+        label =  "toxicity_0"
+    elif toxicity < 0.4:
+        label =  "toxicity_1"
+    elif toxicity < 0.6:
+        label =  "toxicity_2"
+    elif toxicity < 0.8:
+        label =  "toxicity_3"
     else:
-        name = fake.name_female()
-
-    email = f"{name.replace(' ', '.')}@{fake.free_email_domain()}"
-    political_leaning = fake.random_element(
-        elements=(config["agents"]["political_leanings"])
-    )
-    age = fake.random_int(
-        min=config["agents"]["age"]["min"], max=config["agents"]["age"]["max"]
-    )
-    interests = fake.random_elements(
-        elements=set(config["agents"]["interests"]),
-        length=fake.random_int(
-            min=config["agents"]["n_interests"]["min"],
-            max=config["agents"]["n_interests"]["max"],
-        ),
-    )
-
-    toxicity = fake.random_element(elements=(config["agents"]["toxicity_levels"]))
-
-    language = fake.random_element(elements=(config["agents"]["languages"]))
-
-    ag_type = fake.random_element(elements=(config["agents"]["llm_agents"]))
-    pwd = fake.password()
-
-    big_five = {
-        "oe": fake.random_element(elements=(config["agents"]["big_five"]["oe"])),
-        "co": fake.random_element(elements=(config["agents"]["big_five"]["co"])),
-        "ex": fake.random_element(elements=(config["agents"]["big_five"]["ex"])),
-        "ag": fake.random_element(elements=(config["agents"]["big_five"]["ag"])),
-        "ne": fake.random_element(elements=(config["agents"]["big_five"]["ne"])),
-    }
-
-    education_level = fake.random_element(
-        elements=(config["agents"]["education_levels"])
-    )
-
-    try:
-        round_actions = fake.random_int(
-            min=config["agents"]["round_actions"]["min"],
-            max=config["agents"]["round_actions"]["max"],
-        )
-    except:
-        round_actions = 3
-
-    api_key = config["servers"]["llm_api_key"]
-
-    agent = Agent(
-        name=name.replace(" ", ""),
-        pwd=pwd,
-        email=email,
-        age=age,
-        ag_type=ag_type,
-        leaning=political_leaning,
-        interests=list(interests),
-        config=config,
-        big_five=big_five,
-        language=language,
-        education_level=education_level,
-        owner=owner,
-        round_actions=round_actions,
-        gender=gender,
-        nationality=nationality,
-        toxicity=toxicity,
-        api_key=api_key,
-        is_page=0,
-    )
-
-    if not hasattr(agent, "user_id"):
-        print("here")
-        return None
-
-    return agent
+        label =  "toxicity_4"
+    
+    locale = LOCALES.get(language.lower())
+    return TRANSLATIONS[locale].get(label, label)
 
 
-def generate_page(config, owner=None, name=None, feed_url=None):
+def compute_susceptibility(traits: list) -> float:
     """
-    Generate a fake page
-    :param config: configuration dictionary
-    :param name: name of the page
-    :param feed_url: feed url of the page
-    :return: Agent object
+    Computes the mean of the susceptibility scores for the given traits.
     """
-
-    fake = faker.Faker()
-
     try:
-        round_actions = fake.random_int(
-            min=config["agents"]["round_actions"]["min"],
-            max=config["agents"]["round_actions"]["max"],
-        )
+        lambdas = [TRAIT_SUSCEPTIBILITY[trait] for trait in traits]
+        return round(np.mean(lambdas), 3)
+
     except:
-        round_actions = 3
+        print(f"Error: One or more personality traits not found in susceptibility scores. Assigning default value.")
+        return DEFAULT_SUSCEPTIBILITY
 
-    big_five = {
-        "oe": fake.random_element(elements=(config["agents"]["big_five"]["oe"])),
-        "co": fake.random_element(elements=(config["agents"]["big_five"]["co"])),
-        "ex": fake.random_element(elements=(config["agents"]["big_five"]["ex"])),
-        "ag": fake.random_element(elements=(config["agents"]["big_five"]["ag"])),
-        "ne": fake.random_element(elements=(config["agents"]["big_five"]["ne"])),
-    }
+def parse_opinions(response_text, topics):
+    """
+    Parses the response text to extract opinions on specified topics.
+    
+    Each line in the response text is expected to be in the format:
+    "topic: [label] thought"
+    where 'label' is one of the keys in OPINION_TAG_SCORE.
+    """
+    results = []
+    pattern = r'^(.*?)\:\s+\[(.*?)\]\s+(.*)$'
 
-    api_key = config["servers"]["llm_api_key"]
+    for line in response_text.splitlines():
+        match = re.match(pattern, line)
+        if match:
+            raw_topic = match.group(1).strip().lower()
+            label = match.group(2).strip()
+            thought = match.group(3).strip()
 
-    email = f"{name.replace(' ', '.')}@{fake.free_email_domain()}"
+            clean_topic = re.sub(r'[^a-zA-Z\s]', '', raw_topic).strip()
+            if clean_topic in topics and label in OPINION_TAG_SCORE:
+                results.append({
+                    'topic': clean_topic,
+                    'score': OPINION_TAG_SCORE[label],
+                    'description': thought
+                })
 
-    page = PageAgent(
-        name=name,
-        pwd="",
-        email=email,
-        age=0,
-        ag_type=fake.random_element(elements=(config["agents"]["llm_agents"])),
-        leaning=None,
-        interests=[],
-        config=config,
-        big_five=big_five,
-        language=None,
-        education_level=None,
-        owner=owner,
-        round_actions=round_actions,
-        gender=None,
-        nationality=None,
-        toxicity=None,
-        api_key=api_key,
-        feed_url=feed_url,
-        is_page=1,
-    )
+    return results
 
-    return page
+def opinions_to_str(opinions, topics):
+    current_opinions = ""
+
+    for topic in topics:
+        if topic in opinions:
+            current_opinions += f" - {topic.capitalize()}: [{opinions[topic]['label']}] {opinions[topic]['description']}\n"
+    
+    return current_opinions

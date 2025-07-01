@@ -298,7 +298,7 @@ class YClientWeb(object):
 
         :param agent: the agent to add
         """
-        from y_client.utils import generate_user
+        from YClient.y_client.generators import generate_user
 
         if agent is None:
             try:
