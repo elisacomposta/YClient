@@ -1,10 +1,12 @@
 # Fork notes
 This fork extends the original simulator introducing the following:
-- **Agents initialization with real-world data**, using a dataset created based on the multi-platform dataset presented by Pierri et al. (2023): _ITA-ELECTION-2022: A multi-platform dataset of social media conversations around the 2022 Italian general election_, available at https://arxiv.org/abs/2301.05119 
+- **Agents initialization with real-world data**, using the dataset presented by Pierri et al. (2023): _ITA-ELECTION-2022: A multi-platform dataset of social media conversations around the 2022 Italian general election_, available at https://arxiv.org/abs/2301.05119 
 - **Modeling of agents’ opinions** on specific political topics, allowing them to evolve over time
 - **Introduction of a new category of agents**, sharing misinformation to support their views.
 
-The corresponding server is available at https://github.com/elisacomposta/YServer.
+The corresponding server implementation is available [here](https://github.com/elisacomposta/YServer).<br>
+The results and analysis of the experiments can be found in a separate repository [here](https://github.com/elisacomposta/YAnalysis).
+
 
 ---
  
