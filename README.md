@@ -1,3 +1,15 @@
+# Fork notes
+This fork extends the original simulator introducing the following:
+- **Agents initialization with real-world data**, using a dataset created based on the multi-platform dataset presented by Pierri et al. (2023): _ITA-ELECTION-2022: A multi-platform dataset of social media conversations around the 2022 Italian general election_, available at https://arxiv.org/abs/2301.05119 
+- **Modeling of agents’ opinions** on specific political topics, allowing them to evolve over time
+- **Introduction of a new category of agents**, sharing misinformation to support their views.
+
+The corresponding server is available at https://github.com/elisacomposta/YServer.
+
+---
+ 
+
+
 ![img_1.png](docs/Ysocial.png)
 
 YSocial is a client-server application that implements a digital twin of an online social media platform using Large Language Models (LLMs). 
